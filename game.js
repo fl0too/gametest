@@ -26,6 +26,24 @@
   function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
   function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
 
+  function hexToRgb(hex) {
+    const h = hex.replace("#", "");
+    const r = parseInt(h.substring(0, 2), 16);
+    const g = parseInt(h.substring(2, 4), 16);
+    const b = parseInt(h.substring(4, 6), 16);
+    return `${r},${g},${b}`;
+  }
+
+  function roundRect(c, x, y, w, h, r) {
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.arcTo(x + w, y, x + w, y + h, r);
+    c.arcTo(x + w, y + h, x, y + h, r);
+    c.arcTo(x, y + h, x, y, r);
+    c.arcTo(x, y, x + w, y, r);
+    c.closePath();
+  }
+
   function weightedPick(list) {
     const total = list.reduce((s, i) => s + i.weight, 0);
     let r = rand(0, total);
@@ -70,6 +88,95 @@
     if (base.type === "weapon") item.atk = base.atk;
     if (base.type === "armor") item.def = base.def;
     return item;
+  }
+
+  // ---------- Effects (particles, screen shake, transitions) ----------
+  let particles = [];
+  const shake = { time: 0, magnitude: 0 };
+  let transitionAlpha = 0;
+  const ATTACK_ANIM_DURATION = 0.22;
+
+  function spawnParticles(x, y, count, opts) {
+    const {
+      colors = ["255,255,255"],
+      speed = 60,
+      life = 0.4,
+      size = 3,
+      gravity = 0,
+      spread = Math.PI * 2,
+      angle = 0,
+    } = opts;
+    for (let i = 0; i < count; i++) {
+      const a = angle + rand(-spread / 2, spread / 2);
+      const s = rand(speed * 0.4, speed);
+      particles.push({
+        type: "dot",
+        x, y,
+        vx: Math.cos(a) * s,
+        vy: Math.sin(a) * s,
+        life, maxLife: life,
+        size: rand(size * 0.6, size * 1.4),
+        color: colors[randInt(0, colors.length - 1)],
+        gravity,
+      });
+    }
+  }
+
+  function spawnText(x, y, text, color) {
+    particles.push({
+      type: "text",
+      x, y,
+      vx: rand(-8, 8),
+      vy: -42,
+      life: 0.8,
+      maxLife: 0.8,
+      text,
+      color,
+      gravity: 60,
+    });
+  }
+
+  function triggerShake(magnitude, duration) {
+    shake.magnitude = Math.max(shake.magnitude, magnitude);
+    shake.time = Math.max(shake.time, duration);
+  }
+
+  function updateEffects(dt) {
+    for (const p of particles) {
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      if (p.gravity) p.vy += p.gravity * dt;
+      p.life -= dt;
+    }
+    particles = particles.filter((p) => p.life > 0);
+
+    if (shake.time > 0) {
+      shake.time -= dt;
+      if (shake.time <= 0) { shake.time = 0; shake.magnitude = 0; }
+    }
+
+    if (transitionAlpha > 0) transitionAlpha = Math.max(0, transitionAlpha - dt / 0.4);
+  }
+
+  function renderParticles(camX, camY) {
+    for (const p of particles) {
+      const alpha = clamp(p.life / p.maxLife, 0, 1);
+      const sx = p.x - camX;
+      const sy = p.y - camY;
+      ctx.globalAlpha = alpha;
+      if (p.type === "text") {
+        ctx.fillStyle = p.color;
+        ctx.font = "bold 13px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(p.text, sx, sy);
+      } else {
+        ctx.fillStyle = `rgb(${p.color})`;
+        ctx.beginPath();
+        ctx.arc(sx, sy, p.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
   }
 
   // ---------- Dungeon generation ----------
@@ -171,6 +278,7 @@
           uid: "enemy_" + idx + "_" + i,
           name: t.name,
           color: t.color,
+          colorRgb: hexToRgb(t.color),
           x: (room.x + randInt(1, room.w - 2)) * TILE + TILE / 2,
           y: (room.y + randInt(1, room.h - 2)) * TILE + TILE / 2,
           hp: Math.round(t.hp * scale),
@@ -216,8 +324,11 @@
     equippedWeapon: null,
     equippedArmor: null,
     attackCooldown: 0,
+    attackAnimTimer: 0,
     invulnerable: 0,
     facing: { x: 0, y: 1 },
+    animTime: 0,
+    isMoving: false,
   };
 
   function playerAtk() { return player.baseAtk + (player.equippedWeapon ? player.equippedWeapon.atk : 0); }
@@ -227,6 +338,8 @@
     if (item.type === "gold") {
       player.gold += item.amount;
       log(`Picked up ${item.amount} gold.`);
+      spawnText(player.x, player.y - 22, `+${item.amount}g`, "#f0c419");
+      spawnParticles(player.x, player.y, 8, { colors: ["240,196,25"], speed: 70, life: 0.35, size: 2 });
       return;
     }
     if (item.type === "potion") {
@@ -234,10 +347,12 @@
       if (existing) { existing.qty += 1; }
       else { item.qty = 1; player.inventory.push(item); }
       log(`Found ${item.name}.`);
+      spawnParticles(player.x, player.y, 8, { colors: ["120,220,120"], speed: 60, life: 0.4, size: 2.5 });
       return;
     }
     player.inventory.push(item);
     log(`Found ${item.name} (${item.rarity}).`);
+    spawnParticles(player.x, player.y, 10, { colors: [hexToRgb(RARITY_COLOR[item.rarity])], speed: 75, life: 0.45, size: 2.5 });
   }
 
   function useItem(uid) {
@@ -249,18 +364,22 @@
       log(`Drank ${item.name}, healed ${item.heal} HP.`);
       item.qty -= 1;
       if (item.qty <= 0) player.inventory.splice(idx, 1);
+      spawnText(player.x, player.y - 22, `+${item.heal} HP`, "#7ee787");
+      spawnParticles(player.x, player.y, 12, { colors: ["120,230,140"], speed: 55, life: 0.5, size: 2.5, gravity: -30 });
     } else if (item.type === "weapon") {
       const old = player.equippedWeapon;
       player.equippedWeapon = item;
       player.inventory.splice(idx, 1);
       if (old) player.inventory.push(old);
       log(`Equipped ${item.name}.`);
+      spawnParticles(player.x, player.y, 8, { colors: [hexToRgb(RARITY_COLOR[item.rarity])], speed: 50, life: 0.35, size: 2 });
     } else if (item.type === "armor") {
       const old = player.equippedArmor;
       player.equippedArmor = item;
       player.inventory.splice(idx, 1);
       if (old) player.inventory.push(old);
       log(`Equipped ${item.name}.`);
+      spawnParticles(player.x, player.y, 8, { colors: [hexToRgb(RARITY_COLOR[item.rarity])], speed: 50, life: 0.35, size: 2 });
     }
     refreshUI();
   }
@@ -310,6 +429,7 @@
   function tryAttack() {
     if (player.attackCooldown > 0) return;
     player.attackCooldown = 0.4;
+    player.attackAnimTimer = ATTACK_ANIM_DURATION;
     const range = 40;
     let hitAny = false;
     for (const enemy of dungeon.enemies) {
@@ -319,9 +439,12 @@
         const dmg = Math.max(1, playerAtk() - Math.floor(Math.random() * 2));
         enemy.hp -= dmg;
         enemy.hitFlash = 0.15;
+        spawnText(enemy.x, enemy.y - 14, `-${dmg}`, "#ffdd55");
+        spawnParticles(enemy.x, enemy.y, 6, { colors: ["255,255,255", "255,210,120"], speed: 90, life: 0.25, size: 2.5 });
         if (enemy.hp <= 0) {
           enemy.alive = false;
           log(`Defeated ${enemy.name}!`);
+          spawnParticles(enemy.x, enemy.y, 16, { colors: [enemy.colorRgb, "255,255,255"], speed: 130, life: 0.5, size: 3, gravity: 60 });
           if (Math.random() < 0.7) {
             const loot = rollLoot();
             addToInventory(loot);
@@ -329,9 +452,7 @@
         }
       }
     }
-    if (!hitAny) {
-      // whiff, no-op
-    }
+    if (hitAny) triggerShake(2, 0.08);
   }
 
   function tryInteract() {
@@ -339,6 +460,7 @@
       if (chest.opened) continue;
       if (dist(player.x, player.y, chest.x, chest.y) <= 36) {
         chest.opened = true;
+        spawnParticles(chest.x, chest.y, 14, { colors: ["230,190,60", "255,215,80"], speed: 90, life: 0.5, size: 3, gravity: 100 });
         const rolls = randInt(1, 3);
         for (let i = 0; i < rolls; i++) addToInventory(rollLoot());
         log("Opened a chest.");
@@ -358,6 +480,7 @@
     player.y = dungeon.startY;
     document.getElementById("depthLabel").textContent = `Depth ${depth}`;
     log(`Descended to depth ${depth}.`);
+    transitionAlpha = 1;
   }
 
   function updateEnemies(dt) {
@@ -380,6 +503,9 @@
         player.hp -= dmg;
         player.invulnerable = 0.5;
         log(`${enemy.name} hits you for ${dmg}.`);
+        spawnText(player.x, player.y - 22, `-${dmg}`, "#ff6b6b");
+        spawnParticles(player.x, player.y, 6, { colors: ["255,90,90"], speed: 80, life: 0.25, size: 2.5 });
+        triggerShake(4, 0.2);
       }
     }
   }
@@ -403,17 +529,21 @@
     if (keys["KeyS"] || keys["ArrowDown"]) dy += 1;
     if (keys["KeyA"] || keys["ArrowLeft"]) dx -= 1;
     if (keys["KeyD"] || keys["ArrowRight"]) dx += 1;
-    if (dx !== 0 || dy !== 0) {
+    player.isMoving = dx !== 0 || dy !== 0;
+    if (player.isMoving) {
       const len = Math.hypot(dx, dy);
       dx /= len; dy /= len;
       player.facing = { x: dx, y: dy };
       moveEntity(player, dx, dy, dt);
+      player.animTime += dt;
     }
 
     if (player.attackCooldown > 0) player.attackCooldown -= dt;
+    if (player.attackAnimTimer > 0) player.attackAnimTimer = Math.max(0, player.attackAnimTimer - dt);
     if (player.invulnerable > 0) player.invulnerable -= dt;
 
     updateEnemies(dt);
+    updateEffects(dt);
 
     if (player.hp <= 0) {
       player.hp = 0;
@@ -424,11 +554,89 @@
   }
 
   // ---------- Rendering ----------
+  function drawPlayerSprite(cx, cy, facing, moving, animTime, attackTimer, invulnerable, weapon) {
+    const angle = Math.atan2(facing.y, facing.x);
+    const perp = { x: -facing.y, y: facing.x };
+
+    // shadow
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 12, 11, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // feet (alternate stepping while moving)
+    const stepPhase = moving ? Math.sin(animTime * 12) : 0;
+    for (const side of [-1, 1]) {
+      const fx = cx + perp.x * 6 * side + facing.x * (side * stepPhase * 4);
+      const fy = cy + perp.y * 6 * side + facing.y * (side * stepPhase * 4) + 9;
+      ctx.fillStyle = "#2c2418";
+      ctx.beginPath();
+      ctx.ellipse(fx, fy, 3.5, 3, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    const bounce = moving ? Math.abs(Math.sin(animTime * 12)) * 2 : 0;
+    const bodyCy = cy - bounce;
+    const flash = invulnerable > 0 && Math.floor(invulnerable * 20) % 2 === 0;
+
+    // body (tunic)
+    ctx.fillStyle = flash ? "#ffffff" : "#4aa3ff";
+    ctx.strokeStyle = "#173350";
+    ctx.lineWidth = 2;
+    roundRect(ctx, cx - 9, bodyCy - 9, 18, 20, 6);
+    ctx.fill();
+    ctx.stroke();
+
+    // head
+    ctx.fillStyle = flash ? "#ffffff" : "#e8b98c";
+    ctx.beginPath();
+    ctx.arc(cx, bodyCy - 12, 7.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#5c3d28";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // eyes, looking in the facing direction
+    ctx.fillStyle = "#241a12";
+    const eyeOffsetX = facing.x * 3;
+    const eyeOffsetY = facing.y * 3;
+    ctx.beginPath();
+    ctx.arc(cx - 2.5 + eyeOffsetX, bodyCy - 12 + eyeOffsetY, 1.3, 0, Math.PI * 2);
+    ctx.arc(cx + 2.5 + eyeOffsetX, bodyCy - 12 + eyeOffsetY, 1.3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // weapon: rests at an idle angle, swings through an arc on attack
+    const armLen = 20;
+    let weaponAngle = angle + 0.5;
+    if (attackTimer > 0) {
+      const t = 1 - attackTimer / ATTACK_ANIM_DURATION;
+      weaponAngle = angle + (-1 + 2 * t) * 1.1;
+    }
+    const handX = cx + facing.x * 6 - perp.x * 6;
+    const handY = bodyCy + facing.y * 6 - perp.y * 6;
+    const tipX = handX + Math.cos(weaponAngle) * armLen;
+    const tipY = handY + Math.sin(weaponAngle) * armLen;
+    ctx.strokeStyle = weapon ? RARITY_COLOR[weapon.rarity] : "#9a9a9a";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(handX, handY);
+    ctx.lineTo(tipX, tipY);
+    ctx.stroke();
+    ctx.fillStyle = "#4a3a2a";
+    ctx.beginPath();
+    ctx.arc(handX, handY, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   function render() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const camX = clamp(player.x - canvas.width / 2, 0, MAP_W * TILE - canvas.width);
-    const camY = clamp(player.y - canvas.height / 2, 0, MAP_H * TILE - canvas.height);
+    let camX = clamp(player.x - canvas.width / 2, 0, MAP_W * TILE - canvas.width);
+    let camY = clamp(player.y - canvas.height / 2, 0, MAP_H * TILE - canvas.height);
+    if (shake.time > 0) {
+      camX += rand(-1, 1) * shake.magnitude;
+      camY += rand(-1, 1) * shake.magnitude;
+    }
 
     const startTx = Math.floor(camX / TILE);
     const endTx = Math.ceil((camX + canvas.width) / TILE);
@@ -469,9 +677,14 @@
       if (!enemy.alive) continue;
       const sx = enemy.x - camX;
       const sy = enemy.y - camY;
+      ctx.fillStyle = "rgba(0,0,0,0.3)";
+      ctx.beginPath();
+      ctx.ellipse(sx, sy + enemy.radius * 0.8, enemy.radius * 0.9, enemy.radius * 0.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      const squash = enemy.hitFlash > 0 ? 1 + (enemy.hitFlash / 0.15) * 0.3 : 1;
       ctx.fillStyle = enemy.hitFlash > 0 ? "#ffffff" : enemy.color;
       ctx.beginPath();
-      ctx.arc(sx, sy, enemy.radius, 0, Math.PI * 2);
+      ctx.ellipse(sx, sy, enemy.radius / squash, enemy.radius * squash, 0, 0, Math.PI * 2);
       ctx.fill();
       // hp bar
       const w = 24;
@@ -484,18 +697,14 @@
     // player
     const psx = player.x - camX;
     const psy = player.y - camY;
-    ctx.fillStyle = player.invulnerable > 0 ? "#ffdddd" : "#4aa3ff";
-    ctx.beginPath();
-    ctx.arc(psx, psy, player.radius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "#0b2a4a";
-    ctx.stroke();
-    // facing indicator
-    ctx.strokeStyle = "#fff";
-    ctx.beginPath();
-    ctx.moveTo(psx, psy);
-    ctx.lineTo(psx + player.facing.x * 18, psy + player.facing.y * 18);
-    ctx.stroke();
+    drawPlayerSprite(psx, psy, player.facing, player.isMoving, player.animTime, player.attackAnimTimer, player.invulnerable, player.equippedWeapon);
+
+    renderParticles(camX, camY);
+
+    if (transitionAlpha > 0) {
+      ctx.fillStyle = `rgba(0,0,0,${transitionAlpha})`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
 
     if (player.hp <= 0) {
       ctx.fillStyle = "rgba(0,0,0,0.6)";
