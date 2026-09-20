@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Dungeon Looter</title>
+<link rel="icon" href="data:;base64,iVBORw0KGgo=">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>Dungeon Looter</h1>
+      <div id="depthLabel">Depth 1</div>
+    </header>
+
+    <div id="game-area">
+      <canvas id="game" width="960" height="640"></canvas>
+
+      <aside id="sidebar">
+        <section id="stats">
+          <div class="stat-row">
+            <span>HP</span>
+            <div class="bar"><div id="hpFill" class="bar-fill hp"></div></div>
+            <span id="hpText">30/30</span>
+          </div>
+          <div class="stat-grid">
+            <div>Attack: <span id="atkText">3</span></div>
+            <div>Defense: <span id="defText">0</span></div>
+            <div>Gold: <span id="goldText">0</span></div>
+          </div>
+        </section>
+
+        <section id="equipped">
+          <h2>Equipped</h2>
+          <div class="equip-slot" id="equipWeapon">Weapon: <em>none</em></div>
+          <div class="equip-slot" id="equipArmor">Armor: <em>none</em></div>
+        </section>
+
+        <section id="inventory">
+          <h2>Inventory</h2>
+          <div id="invList"></div>
+        </section>
+
+        <section id="log">
+          <h2>Log</h2>
+          <div id="logList"></div>
+        </section>
+      </aside>
+    </div>
+
+    <footer>
+      <strong>Move:</strong> WASD / Arrows &nbsp;|&nbsp;
+      <strong>Attack:</strong> Space &nbsp;|&nbsp;
+      <strong>Open Chest / Stairs:</strong> E &nbsp;|&nbsp;
+      <strong>Use/Equip Item:</strong> Click it in Inventory
+    </footer>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
