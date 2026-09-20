@@ -14,7 +14,21 @@
     </header>
 
     <div id="game-area">
-      <canvas id="game" width="960" height="640"></canvas>
+      <div id="canvasWrap">
+        <canvas id="game" width="960" height="640"></canvas>
+
+        <div id="chestLootOverlay" class="hidden">
+          <div class="chest-loot-panel">
+            <h2>Chest Loot</h2>
+            <p class="chest-loot-hint">Click an item, or drag it into your inventory.</p>
+            <div id="chestLootItems"></div>
+            <div class="chest-loot-actions">
+              <button id="takeAllBtn" type="button">Take All</button>
+              <button id="closeLootBtn" type="button">Close</button>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <aside id="sidebar">
         <section id="stats">

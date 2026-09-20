@@ -54,6 +54,11 @@ header h1 {
   gap: 12px;
 }
 
+#canvasWrap {
+  position: relative;
+  line-height: 0;
+}
+
 canvas {
   background: var(--wall);
   border: 3px solid var(--panel-border);
@@ -194,4 +199,98 @@ footer {
   color: var(--muted);
   border-top: 1px solid var(--panel-border);
   padding-top: 6px;
+}
+
+#chestLootOverlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+
+#chestLootOverlay.hidden {
+  display: none;
+}
+
+.chest-loot-panel {
+  background: var(--panel);
+  border: 1px solid #8a6f2b;
+  border-radius: 8px;
+  padding: 16px;
+  width: 300px;
+  max-width: 85%;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+  line-height: normal;
+}
+
+.chest-loot-panel h2 {
+  margin: 0 0 4px 0;
+  font-size: 15px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #d9b354;
+  text-align: center;
+}
+
+.chest-loot-hint {
+  margin: 0 0 12px 0;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+#chestLootItems {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.loot-item {
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  cursor: grab;
+  font-size: 13px;
+}
+
+.loot-item:hover {
+  background: rgba(255,255,255,0.09);
+  border-color: #8a6f2b;
+}
+
+.loot-item:active {
+  cursor: grabbing;
+}
+
+.chest-loot-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.chest-loot-actions button {
+  flex: 1;
+  padding: 6px 10px;
+  background: #2a2018;
+  border: 1px solid var(--panel-border);
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.chest-loot-actions button:hover {
+  background: #3a2c1c;
+}
+
+#inventory.drag-over {
+  border-color: #8a6f2b;
+  background: rgba(138,111,39,0.12);
 }

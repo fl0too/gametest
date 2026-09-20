@@ -496,6 +496,87 @@
   }
   window.useItem = useItem;
 
+  // ---------- Chest loot reveal ----------
+  let openChestLoot = null; // { chest, items: [...] }
+
+  function lootItemLabel(item) {
+    if (item.type === "gold") return `${item.name} (${item.amount}g)`;
+    if (item.type === "potion") return `${item.name} (+${item.heal} hp)`;
+    if (item.type === "weapon") return `${item.name} (+${item.atk} atk)`;
+    if (item.type === "armor") return `${item.name} (+${item.def} def)`;
+    return item.name;
+  }
+
+  function renderChestLootUI() {
+    const overlay = document.getElementById("chestLootOverlay");
+    if (!openChestLoot || openChestLoot.items.length === 0) {
+      overlay.classList.add("hidden");
+      openChestLoot = null;
+      return;
+    }
+    overlay.classList.remove("hidden");
+    const container = document.getElementById("chestLootItems");
+    container.innerHTML = "";
+    openChestLoot.items.forEach((item, idx) => {
+      const row = document.createElement("div");
+      row.className = "loot-item";
+      row.draggable = true;
+      row.innerHTML = `<span class="rarity-${item.rarity}">${lootItemLabel(item)}</span>`;
+      row.addEventListener("click", () => takeChestItem(idx));
+      row.addEventListener("dragstart", (e) => {
+        e.dataTransfer.setData("text/plain", String(idx));
+        e.dataTransfer.effectAllowed = "move";
+      });
+      container.appendChild(row);
+    });
+  }
+
+  function openChestLootUI(chest, items) {
+    openChestLoot = { chest, items };
+    renderChestLootUI();
+  }
+
+  function closeChestLootUI() {
+    openChestLoot = null;
+    document.getElementById("chestLootOverlay").classList.add("hidden");
+  }
+
+  function takeChestItem(idx) {
+    if (!openChestLoot) return;
+    const [item] = openChestLoot.items.splice(idx, 1);
+    if (item) addToInventory(item);
+    refreshUI();
+    renderChestLootUI();
+  }
+
+  function takeAllChestItems() {
+    if (!openChestLoot) return;
+    while (openChestLoot.items.length) {
+      addToInventory(openChestLoot.items.shift());
+    }
+    refreshUI();
+    closeChestLootUI();
+  }
+
+  document.getElementById("takeAllBtn").addEventListener("click", takeAllChestItems);
+  document.getElementById("closeLootBtn").addEventListener("click", closeChestLootUI);
+  document.getElementById("chestLootOverlay").addEventListener("click", (e) => {
+    if (e.target.id === "chestLootOverlay") closeChestLootUI();
+  });
+
+  const inventorySection = document.getElementById("inventory");
+  inventorySection.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    inventorySection.classList.add("drag-over");
+  });
+  inventorySection.addEventListener("dragleave", () => inventorySection.classList.remove("drag-over"));
+  inventorySection.addEventListener("drop", (e) => {
+    e.preventDefault();
+    inventorySection.classList.remove("drag-over");
+    const idx = parseInt(e.dataTransfer.getData("text/plain"), 10);
+    if (!Number.isNaN(idx)) takeChestItem(idx);
+  });
+
   // ---------- Game state ----------
   let depth = 1;
   let dungeon = generateDungeon(depth);
@@ -563,7 +644,7 @@
   }
 
   function tryDash() {
-    if (player.hp <= 0 || player.dashCooldown > 0 || player.dashTimer > 0) return;
+    if (player.hp <= 0 || openChestLoot || player.dashCooldown > 0 || player.dashTimer > 0) return;
 
     let dx = 0, dy = 0;
     if (keys["KeyW"] || keys["ArrowUp"]) dy -= 1;
@@ -617,7 +698,7 @@
   }
 
   function tryAttack() {
-    if (player.attackCooldown > 0) return;
+    if (openChestLoot || player.attackCooldown > 0) return;
     player.attackCooldown = 0.4;
     player.attackAnimTimer = ATTACK_ANIM_DURATION;
     const range = 40;
@@ -634,7 +715,7 @@
   }
 
   function tryRangedAttack() {
-    if (player.hp <= 0 || player.rangedCooldown > 0) return;
+    if (player.hp <= 0 || openChestLoot || player.rangedCooldown > 0) return;
     player.rangedCooldown = RANGED_COOLDOWN;
     const dmg = Math.max(1, Math.round(playerAtk() * 0.7));
     const startX = player.x + player.facing.x * 14;
@@ -651,15 +732,17 @@
   }
 
   function tryInteract() {
+    if (openChestLoot) return;
     for (const chest of dungeon.chests) {
       if (chest.opened) continue;
       if (dist(player.x, player.y, chest.x, chest.y) <= 36) {
         chest.opened = true;
         spawnParticles(chest.x, chest.y, 14, { colors: ["230,190,60", "255,215,80"], speed: 90, life: 0.5, size: 3, gravity: 100 });
         const rolls = randInt(1, 3);
-        for (let i = 0; i < rolls; i++) addToInventory(rollLoot());
+        const items = [];
+        for (let i = 0; i < rolls; i++) items.push(rollLoot());
         log("Opened a chest.");
-        refreshUI();
+        openChestLootUI(chest, items);
         return;
       }
     }
@@ -759,7 +842,11 @@
     lastTime = now;
 
     if (player.hp > 0) {
-      update(dt);
+      if (!openChestLoot) {
+        update(dt);
+      } else {
+        updateEffects(dt);
+      }
     }
     render();
     requestAnimationFrame(loop);
