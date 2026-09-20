@@ -95,6 +95,9 @@
   const shake = { time: 0, magnitude: 0 };
   let transitionAlpha = 0;
   const ATTACK_ANIM_DURATION = 0.22;
+  const DASH_DURATION = 0.16;
+  const DASH_SPEED = 480;
+  const DASH_COOLDOWN = 0.8;
 
   function spawnParticles(x, y, count, opts) {
     const {
@@ -169,6 +172,11 @@
         ctx.font = "bold 13px sans-serif";
         ctx.textAlign = "center";
         ctx.fillText(p.text, sx, sy);
+      } else if (p.type === "ghost") {
+        ctx.fillStyle = `rgba(74,163,255,${alpha * 0.35})`;
+        ctx.beginPath();
+        ctx.ellipse(sx, sy, p.size, p.size * 1.1, 0, 0, Math.PI * 2);
+        ctx.fill();
       } else {
         ctx.fillStyle = `rgb(${p.color})`;
         ctx.beginPath();
@@ -333,6 +341,9 @@
     facing: { x: 0, y: 1 },
     animTime: 0,
     isMoving: false,
+    dashTimer: 0,
+    dashCooldown: 0,
+    dashDir: { x: 0, y: 1 },
   };
 
   function playerAtk() { return player.baseAtk + (player.equippedWeapon ? player.equippedWeapon.atk : 0); }
@@ -400,6 +411,7 @@
     keys[e.code] = true;
     if (e.code === "Space") { e.preventDefault(); tryAttack(); }
     if (e.code === "KeyE") { tryInteract(); }
+    if (e.code === "ShiftLeft" || e.code === "ShiftRight") { tryDash(); }
   });
   window.addEventListener("keyup", (e) => { keys[e.code] = false; });
 
@@ -408,8 +420,12 @@
   }
 
   function moveEntity(entity, dx, dy, dt) {
-    const moveX = dx * entity.speed * dt;
-    const moveY = dy * entity.speed * dt;
+    moveEntityWithSpeed(entity, dx, dy, entity.speed, dt);
+  }
+
+  function moveEntityWithSpeed(entity, dx, dy, speed, dt) {
+    const moveX = dx * speed * dt;
+    const moveY = dy * speed * dt;
 
     let nx = entity.x + moveX;
     if (!collides(nx, entity.y, entity.radius)) entity.x = nx;
@@ -428,6 +444,36 @@
       }
     }
     return false;
+  }
+
+  function tryDash() {
+    if (player.hp <= 0 || player.dashCooldown > 0 || player.dashTimer > 0) return;
+
+    let dx = 0, dy = 0;
+    if (keys["KeyW"] || keys["ArrowUp"]) dy -= 1;
+    if (keys["KeyS"] || keys["ArrowDown"]) dy += 1;
+    if (keys["KeyA"] || keys["ArrowLeft"]) dx -= 1;
+    if (keys["KeyD"] || keys["ArrowRight"]) dx += 1;
+    if (dx === 0 && dy === 0) {
+      dx = player.facing.x;
+      dy = player.facing.y;
+    } else {
+      const len = Math.hypot(dx, dy);
+      dx /= len; dy /= len;
+    }
+
+    player.dashDir = { x: dx, y: dy };
+    player.dashTimer = DASH_DURATION;
+    player.dashCooldown = DASH_COOLDOWN;
+    player.facing = { x: dx, y: dy };
+    player.invulnerable = Math.max(player.invulnerable, DASH_DURATION + 0.05);
+
+    triggerShake(1.5, 0.08);
+    spawnParticles(player.x, player.y, 12, {
+      colors: ["190,225,255", "255,255,255"],
+      speed: 90, life: 0.25, size: 2,
+      spread: Math.PI * 0.9, angle: Math.atan2(-dy, -dx),
+    });
   }
 
   function tryAttack() {
@@ -536,15 +582,27 @@
     if (keys["KeyS"] || keys["ArrowDown"]) dy += 1;
     if (keys["KeyA"] || keys["ArrowLeft"]) dx -= 1;
     if (keys["KeyD"] || keys["ArrowRight"]) dx += 1;
-    player.isMoving = dx !== 0 || dy !== 0;
-    if (player.isMoving) {
-      const len = Math.hypot(dx, dy);
-      dx /= len; dy /= len;
-      player.facing = { x: dx, y: dy };
-      moveEntity(player, dx, dy, dt);
-      player.animTime += dt;
+    if (player.dashTimer > 0) {
+      player.dashTimer = Math.max(0, player.dashTimer - dt);
+      player.isMoving = true;
+      player.animTime += dt * 2.5;
+      moveEntityWithSpeed(player, player.dashDir.x, player.dashDir.y, DASH_SPEED, dt);
+      particles.push({
+        type: "ghost", x: player.x, y: player.y, vx: 0, vy: 0,
+        life: 0.15, maxLife: 0.15, size: player.radius,
+      });
+    } else {
+      player.isMoving = dx !== 0 || dy !== 0;
+      if (player.isMoving) {
+        const len = Math.hypot(dx, dy);
+        dx /= len; dy /= len;
+        player.facing = { x: dx, y: dy };
+        moveEntity(player, dx, dy, dt);
+        player.animTime += dt;
+      }
     }
 
+    if (player.dashCooldown > 0) player.dashCooldown = Math.max(0, player.dashCooldown - dt);
     if (player.attackCooldown > 0) player.attackCooldown -= dt;
     if (player.attackAnimTimer > 0) player.attackAnimTimer = Math.max(0, player.attackAnimTimer - dt);
     if (player.invulnerable > 0) player.invulnerable -= dt;
@@ -960,6 +1018,8 @@
   function refreshUI() {
     document.getElementById("hpFill").style.width = `${clamp((player.hp / player.maxHp) * 100, 0, 100)}%`;
     document.getElementById("hpText").textContent = `${Math.max(0, Math.round(player.hp))}/${player.maxHp}`;
+    document.getElementById("dashFill").style.width = `${clamp((1 - player.dashCooldown / DASH_COOLDOWN) * 100, 0, 100)}%`;
+    document.getElementById("dashText").textContent = player.dashCooldown > 0 ? `${player.dashCooldown.toFixed(1)}s` : "Ready";
     document.getElementById("atkText").textContent = playerAtk();
     document.getElementById("defText").textContent = playerDef();
     document.getElementById("goldText").textContent = player.gold;

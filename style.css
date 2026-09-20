@@ -109,6 +109,10 @@ canvas {
   background: linear-gradient(90deg, #7a1f1f, #d63b3b);
 }
 
+.bar-fill.dash {
+  background: linear-gradient(90deg, #1a5276, #5dade2);
+}
+
 .stat-grid {
   display: grid;
   grid-template-columns: 1fr;
