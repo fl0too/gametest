@@ -113,6 +113,10 @@ canvas {
   background: linear-gradient(90deg, #1a5276, #5dade2);
 }
 
+.bar-fill.bolt {
+  background: linear-gradient(90deg, #6c3483, #af7ac5);
+}
+
 .stat-grid {
   display: grid;
   grid-template-columns: 1fr;

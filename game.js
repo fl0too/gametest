@@ -98,6 +98,9 @@
   const DASH_DURATION = 0.16;
   const DASH_SPEED = 480;
   const DASH_COOLDOWN = 0.8;
+  const RANGED_COOLDOWN = 0.6;
+  const PLAYER_BOLT_SPEED = 420;
+  const PLAYER_BOLT_RANGE = 420;
 
   function spawnParticles(x, y, count, opts) {
     const {
@@ -187,6 +190,88 @@
     }
   }
 
+  // ---------- Projectiles (ranged attacks) ----------
+  let projectiles = [];
+
+  function isWallAtPoint(x, y) {
+    return isWall(dungeon.grid, Math.floor(x / TILE), Math.floor(y / TILE));
+  }
+
+  function spawnProjectile(opts) {
+    projectiles.push({
+      x: opts.x, y: opts.y,
+      vx: opts.vx, vy: opts.vy,
+      dmg: opts.dmg,
+      owner: opts.owner,
+      ownerName: opts.ownerName,
+      radius: opts.radius,
+      life: opts.life,
+      type: opts.type,
+      color: opts.color,
+    });
+  }
+
+  function updateProjectiles(dt) {
+    for (const p of projectiles) {
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= dt;
+      if (p.life <= 0 || isWallAtPoint(p.x, p.y)) {
+        p.dead = true;
+        spawnParticles(p.x, p.y, 5, { colors: p.type === "arrow" ? ["200,180,140"] : ["150,210,255"], speed: 50, life: 0.2, size: 1.8 });
+        continue;
+      }
+      if (p.owner === "player") {
+        for (const enemy of dungeon.enemies) {
+          if (!enemy.alive) continue;
+          if (dist(p.x, p.y, enemy.x, enemy.y) <= enemy.radius + p.radius) {
+            damageEnemy(enemy, p.dmg);
+            p.dead = true;
+            break;
+          }
+        }
+      } else if (p.owner === "enemy" && player.invulnerable <= 0 && player.hp > 0) {
+        if (dist(p.x, p.y, player.x, player.y) <= player.radius + p.radius) {
+          damagePlayer(p.dmg, p.ownerName);
+          p.dead = true;
+        }
+      }
+    }
+    projectiles = projectiles.filter((p) => !p.dead);
+  }
+
+  function renderProjectiles(camX, camY) {
+    for (const p of projectiles) {
+      const sx = p.x - camX;
+      const sy = p.y - camY;
+      if (p.type === "arrow") {
+        const angle = Math.atan2(p.vy, p.vx);
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(sx - Math.cos(angle) * 7, sy - Math.sin(angle) * 7);
+        ctx.lineTo(sx + Math.cos(angle) * 7, sy + Math.sin(angle) * 7);
+        ctx.stroke();
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.moveTo(sx + Math.cos(angle) * 7, sy + Math.sin(angle) * 7);
+        ctx.lineTo(sx + Math.cos(angle + 2.6) * 3, sy + Math.sin(angle + 2.6) * 3);
+        ctx.lineTo(sx + Math.cos(angle - 2.6) * 3, sy + Math.sin(angle - 2.6) * 3);
+        ctx.closePath();
+        ctx.fill();
+      } else {
+        ctx.fillStyle = "rgba(120,200,255,0.35)";
+        ctx.beginPath();
+        ctx.arc(sx, sy, 7, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#bfe6ff";
+        ctx.beginPath();
+        ctx.arc(sx, sy, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
   // ---------- Dungeon generation ----------
   function createGrid(w, h, fill) {
     const grid = [];
@@ -262,6 +347,10 @@
     const enemies = [];
     const enemyTypes = [
       { key: "rat", name: "Rat", hp: 12, atk: 2, color: "#8a7358", speed: 60, radius: 9 },
+      {
+        key: "archer", name: "Goblin Archer", hp: 13, atk: 3, color: "#3f6b3a", speed: 55, radius: 11,
+        ranged: true, preferredRange: 170, projectileSpeed: 260, projectileRange: 320, fireCooldown: 1.3,
+      },
       { key: "skeleton", name: "Skeleton", hp: 20, atk: 4, color: "#d8d3c4", speed: 50, radius: 11 },
       { key: "goblin", name: "Goblin", hp: 16, atk: 3, color: "#5fa864", speed: 70, radius: 11 },
       { key: "ogre", name: "Ogre", hp: 40, atk: 7, color: "#7a4a4a", speed: 40, radius: 14 },
@@ -301,6 +390,12 @@
           facing: { x: 0, y: 1 },
           animTime: 0,
           isMoving: false,
+          ranged: !!t.ranged,
+          preferredRange: t.preferredRange,
+          projectileSpeed: t.projectileSpeed,
+          projectileRange: t.projectileRange,
+          fireCooldown: t.fireCooldown,
+          rangedAnimTimer: 0,
         });
       }
     });
@@ -344,6 +439,7 @@
     dashTimer: 0,
     dashCooldown: 0,
     dashDir: { x: 0, y: 1 },
+    rangedCooldown: 0,
   };
 
   function playerAtk() { return player.baseAtk + (player.equippedWeapon ? player.equippedWeapon.atk : 0); }
@@ -412,6 +508,7 @@
     if (e.code === "Space") { e.preventDefault(); tryAttack(); }
     if (e.code === "KeyE") { tryInteract(); }
     if (e.code === "ShiftLeft" || e.code === "ShiftRight") { tryDash(); }
+    if (e.code === "KeyF") { tryRangedAttack(); }
   });
   window.addEventListener("keyup", (e) => { keys[e.code] = false; });
 
@@ -476,6 +573,31 @@
     });
   }
 
+  function damageEnemy(enemy, dmg) {
+    enemy.hp -= dmg;
+    enemy.hitFlash = 0.15;
+    spawnText(enemy.x, enemy.y - 14, `-${dmg}`, "#ffdd55");
+    spawnParticles(enemy.x, enemy.y, 6, { colors: ["255,255,255", "255,210,120"], speed: 90, life: 0.25, size: 2.5 });
+    if (enemy.hp <= 0 && enemy.alive) {
+      enemy.alive = false;
+      log(`Defeated ${enemy.name}!`);
+      spawnParticles(enemy.x, enemy.y, 16, { colors: [enemy.colorRgb, "255,255,255"], speed: 130, life: 0.5, size: 3, gravity: 60 });
+      if (Math.random() < 0.7) {
+        const loot = rollLoot();
+        addToInventory(loot);
+      }
+    }
+  }
+
+  function damagePlayer(dmg, sourceName) {
+    player.hp -= dmg;
+    player.invulnerable = 0.5;
+    log(`${sourceName} hits you for ${dmg}.`);
+    spawnText(player.x, player.y - 22, `-${dmg}`, "#ff6b6b");
+    spawnParticles(player.x, player.y, 6, { colors: ["255,90,90"], speed: 80, life: 0.25, size: 2.5 });
+    triggerShake(4, 0.2);
+  }
+
   function tryAttack() {
     if (player.attackCooldown > 0) return;
     player.attackCooldown = 0.4;
@@ -487,22 +609,27 @@
       if (dist(player.x, player.y, enemy.x, enemy.y) <= range) {
         hitAny = true;
         const dmg = Math.max(1, playerAtk() - Math.floor(Math.random() * 2));
-        enemy.hp -= dmg;
-        enemy.hitFlash = 0.15;
-        spawnText(enemy.x, enemy.y - 14, `-${dmg}`, "#ffdd55");
-        spawnParticles(enemy.x, enemy.y, 6, { colors: ["255,255,255", "255,210,120"], speed: 90, life: 0.25, size: 2.5 });
-        if (enemy.hp <= 0) {
-          enemy.alive = false;
-          log(`Defeated ${enemy.name}!`);
-          spawnParticles(enemy.x, enemy.y, 16, { colors: [enemy.colorRgb, "255,255,255"], speed: 130, life: 0.5, size: 3, gravity: 60 });
-          if (Math.random() < 0.7) {
-            const loot = rollLoot();
-            addToInventory(loot);
-          }
-        }
+        damageEnemy(enemy, dmg);
       }
     }
     if (hitAny) triggerShake(2, 0.08);
+  }
+
+  function tryRangedAttack() {
+    if (player.hp <= 0 || player.rangedCooldown > 0) return;
+    player.rangedCooldown = RANGED_COOLDOWN;
+    const dmg = Math.max(1, Math.round(playerAtk() * 0.7));
+    const startX = player.x + player.facing.x * 14;
+    const startY = player.y + player.facing.y * 14;
+    spawnProjectile({
+      x: startX, y: startY,
+      vx: player.facing.x * PLAYER_BOLT_SPEED,
+      vy: player.facing.y * PLAYER_BOLT_SPEED,
+      dmg, owner: "player", radius: 5,
+      life: PLAYER_BOLT_RANGE / PLAYER_BOLT_SPEED,
+      type: "bolt", color: "#bfe6ff",
+    });
+    spawnParticles(startX, startY, 6, { colors: ["150,210,255"], speed: 40, life: 0.2, size: 2 });
   }
 
   function tryInteract() {
@@ -533,13 +660,62 @@
     transitionAlpha = 1;
   }
 
+  function enemyFireArrow(enemy) {
+    const ddx = player.x - enemy.x;
+    const ddy = player.y - enemy.y;
+    const d = Math.hypot(ddx, ddy) || 1;
+    const dirX = ddx / d;
+    const dirY = ddy / d;
+    spawnProjectile({
+      x: enemy.x + dirX * 14, y: enemy.y + dirY * 14,
+      vx: dirX * enemy.projectileSpeed, vy: dirY * enemy.projectileSpeed,
+      dmg: Math.max(1, enemy.atk - playerDef()),
+      owner: "enemy", ownerName: enemy.name, radius: 4,
+      life: enemy.projectileRange / enemy.projectileSpeed,
+      type: "arrow", color: "#caa96b",
+    });
+    enemy.rangedAnimTimer = 0.2;
+    spawnParticles(enemy.x + dirX * 10, enemy.y + dirY * 10, 4, { colors: ["200,180,140"], speed: 30, life: 0.15, size: 1.5 });
+  }
+
   function updateEnemies(dt) {
     for (const enemy of dungeon.enemies) {
       if (!enemy.alive) continue;
       if (enemy.hitFlash > 0) enemy.hitFlash -= dt;
       if (enemy.attackCooldown > 0) enemy.attackCooldown -= dt;
+      if (enemy.rangedAnimTimer > 0) enemy.rangedAnimTimer = Math.max(0, enemy.rangedAnimTimer - dt);
 
       const d = dist(enemy.x, enemy.y, player.x, player.y);
+
+      if (enemy.ranged) {
+        const aggro = 260;
+        enemy.isMoving = false;
+        if (d < aggro) {
+          const dx = (player.x - enemy.x) / d;
+          const dy = (player.y - enemy.y) / d;
+          enemy.facing = { x: dx, y: dy };
+          if (d > enemy.preferredRange + 20) {
+            enemy.isMoving = true;
+            enemy.animTime += dt;
+            const moveX = dx * enemy.speed * dt;
+            const moveY = dy * enemy.speed * dt;
+            if (!collides(enemy.x + moveX, enemy.y, enemy.radius)) enemy.x += moveX;
+            if (!collides(enemy.x, enemy.y + moveY, enemy.radius)) enemy.y += moveY;
+          } else if (d < enemy.preferredRange - 30) {
+            enemy.isMoving = true;
+            enemy.animTime += dt;
+            const moveX = -dx * enemy.speed * dt;
+            const moveY = -dy * enemy.speed * dt;
+            if (!collides(enemy.x + moveX, enemy.y, enemy.radius)) enemy.x += moveX;
+            if (!collides(enemy.x, enemy.y + moveY, enemy.radius)) enemy.y += moveY;
+          } else if (enemy.attackCooldown <= 0) {
+            enemy.attackCooldown = enemy.fireCooldown;
+            enemyFireArrow(enemy);
+          }
+        }
+        continue;
+      }
+
       enemy.isMoving = d < 220 && d > 30;
       if (enemy.isMoving) {
         const dx = (player.x - enemy.x) / d;
@@ -553,12 +729,7 @@
       } else if (d <= 30 && enemy.attackCooldown <= 0 && player.invulnerable <= 0) {
         enemy.attackCooldown = 1.0;
         const dmg = Math.max(1, enemy.atk - playerDef());
-        player.hp -= dmg;
-        player.invulnerable = 0.5;
-        log(`${enemy.name} hits you for ${dmg}.`);
-        spawnText(player.x, player.y - 22, `-${dmg}`, "#ff6b6b");
-        spawnParticles(player.x, player.y, 6, { colors: ["255,90,90"], speed: 80, life: 0.25, size: 2.5 });
-        triggerShake(4, 0.2);
+        damagePlayer(dmg, enemy.name);
       }
     }
   }
@@ -605,9 +776,11 @@
     if (player.dashCooldown > 0) player.dashCooldown = Math.max(0, player.dashCooldown - dt);
     if (player.attackCooldown > 0) player.attackCooldown -= dt;
     if (player.attackAnimTimer > 0) player.attackAnimTimer = Math.max(0, player.attackAnimTimer - dt);
+    if (player.rangedCooldown > 0) player.rangedCooldown = Math.max(0, player.rangedCooldown - dt);
     if (player.invulnerable > 0) player.invulnerable -= dt;
 
     updateEnemies(dt);
+    updateProjectiles(dt);
     updateEffects(dt);
 
     if (player.hp <= 0) {
@@ -895,8 +1068,64 @@
     ctx.fill();
   }
 
+  function drawArcher(cx, cy, facing, moving, animTime, bodyColor, eyeColor, enemy) {
+    const perp = { x: -facing.y, y: facing.x };
+    const bob = moving ? Math.abs(Math.sin(animTime * 11)) * 1.5 : 0;
+    const by = cy - bob;
+
+    // hooded cloak body
+    ctx.fillStyle = bodyColor;
+    ctx.strokeStyle = "#1f3320";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cx - 7, by + 9);
+    ctx.lineTo(cx - 5, by - 8);
+    ctx.lineTo(cx + 5, by - 8);
+    ctx.lineTo(cx + 7, by + 9);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // hood
+    const headY = by - 11;
+    ctx.beginPath();
+    ctx.arc(cx, headY, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // glowing eyes under the hood
+    ctx.fillStyle = eyeColor;
+    const eyeOffsetX = facing.x * 2;
+    const eyeOffsetY = facing.y * 2;
+    ctx.beginPath();
+    ctx.arc(cx - 2 + eyeOffsetX, headY + 1 + eyeOffsetY, 1.1, 0, Math.PI * 2);
+    ctx.arc(cx + 2 + eyeOffsetX, headY + 1 + eyeOffsetY, 1.1, 0, Math.PI * 2);
+    ctx.fill();
+
+    // bow, held out toward the facing direction
+    const bowX = cx + facing.x * 9;
+    const bowY = by + facing.y * 9;
+    const bowAngle = Math.atan2(perp.y, perp.x);
+    ctx.strokeStyle = "#6b4a2a";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(bowX, bowY, 8, bowAngle - 0.9, bowAngle + 0.9);
+    ctx.stroke();
+
+    // bright bowstring flash right after loosing an arrow
+    if (enemy && enemy.rangedAnimTimer > 0) {
+      ctx.strokeStyle = `rgba(255,255,255,${enemy.rangedAnimTimer / 0.2})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(bowX + perp.x * 7, bowY + perp.y * 7);
+      ctx.lineTo(bowX - perp.x * 7, bowY - perp.y * 7);
+      ctx.stroke();
+    }
+  }
+
   const ENEMY_SPRITES = {
     rat: drawRat,
+    archer: drawArcher,
     skeleton: drawSkeleton,
     goblin: drawGoblin,
     ogre: drawOgre,
@@ -911,7 +1140,7 @@
 
     const flash = enemy.hitFlash > 0 && Math.floor(enemy.hitFlash * 40) % 2 === 0;
     const bodyColor = flash ? "#ffffff" : enemy.color;
-    const eyeColor = enemy.type === "goblin" ? "#f0d94a" : "#1a1410";
+    const eyeColor = enemy.type === "goblin" || enemy.type === "archer" ? "#f0d94a" : "#1a1410";
 
     const squash = enemy.hitFlash > 0 ? 1 + (enemy.hitFlash / 0.15) * 0.15 : 1;
     ctx.save();
@@ -921,7 +1150,7 @@
 
     const draw = ENEMY_SPRITES[enemy.type];
     if (draw) {
-      draw(cx, cy, enemy.facing, enemy.isMoving, enemy.animTime, bodyColor, eyeColor);
+      draw(cx, cy, enemy.facing, enemy.isMoving, enemy.animTime, bodyColor, eyeColor, enemy);
     } else {
       ctx.fillStyle = bodyColor;
       ctx.beginPath();
@@ -989,6 +1218,8 @@
       ctx.fillRect(sx - w / 2, sy - enemy.radius - 12, w * clamp(enemy.hp / enemy.maxHp, 0, 1), 4);
     }
 
+    renderProjectiles(camX, camY);
+
     // player
     const psx = player.x - camX;
     const psy = player.y - camY;
@@ -1020,6 +1251,8 @@
     document.getElementById("hpText").textContent = `${Math.max(0, Math.round(player.hp))}/${player.maxHp}`;
     document.getElementById("dashFill").style.width = `${clamp((1 - player.dashCooldown / DASH_COOLDOWN) * 100, 0, 100)}%`;
     document.getElementById("dashText").textContent = player.dashCooldown > 0 ? `${player.dashCooldown.toFixed(1)}s` : "Ready";
+    document.getElementById("boltFill").style.width = `${clamp((1 - player.rangedCooldown / RANGED_COOLDOWN) * 100, 0, 100)}%`;
+    document.getElementById("boltText").textContent = player.rangedCooldown > 0 ? `${player.rangedCooldown.toFixed(1)}s` : "Ready";
     document.getElementById("atkText").textContent = playerAtk();
     document.getElementById("defText").textContent = playerDef();
     document.getElementById("goldText").textContent = player.gold;
