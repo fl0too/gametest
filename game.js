@@ -512,6 +512,25 @@
   });
   window.addEventListener("keyup", (e) => { keys[e.code] = false; });
 
+  const mouse = { x: canvas.width / 2, y: canvas.height / 2 };
+  canvas.addEventListener("mousemove", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = (e.clientX - rect.left) * (canvas.width / rect.width);
+    mouse.y = (e.clientY - rect.top) * (canvas.height / rect.height);
+  });
+
+  function updateAimFromMouse() {
+    const cam = getCameraBase();
+    const worldMouseX = mouse.x + cam.x;
+    const worldMouseY = mouse.y + cam.y;
+    const aimDX = worldMouseX - player.x;
+    const aimDY = worldMouseY - player.y;
+    const aimLen = Math.hypot(aimDX, aimDY);
+    if (aimLen > 1) {
+      player.facing = { x: aimDX / aimLen, y: aimDY / aimLen };
+    }
+  }
+
   function tileAt(px, py) {
     return { tx: Math.floor(px / TILE), ty: Math.floor(py / TILE) };
   }
@@ -562,7 +581,6 @@
     player.dashDir = { x: dx, y: dy };
     player.dashTimer = DASH_DURATION;
     player.dashCooldown = DASH_COOLDOWN;
-    player.facing = { x: dx, y: dy };
     player.invulnerable = Math.max(player.invulnerable, DASH_DURATION + 0.05);
 
     triggerShake(1.5, 0.08);
@@ -767,11 +785,12 @@
       if (player.isMoving) {
         const len = Math.hypot(dx, dy);
         dx /= len; dy /= len;
-        player.facing = { x: dx, y: dy };
         moveEntity(player, dx, dy, dt);
         player.animTime += dt;
       }
     }
+
+    updateAimFromMouse();
 
     if (player.dashCooldown > 0) player.dashCooldown = Math.max(0, player.dashCooldown - dt);
     if (player.attackCooldown > 0) player.attackCooldown -= dt;
@@ -1160,11 +1179,19 @@
     ctx.restore();
   }
 
+  function getCameraBase() {
+    return {
+      x: clamp(player.x - canvas.width / 2, 0, MAP_W * TILE - canvas.width),
+      y: clamp(player.y - canvas.height / 2, 0, MAP_H * TILE - canvas.height),
+    };
+  }
+
   function render() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    let camX = clamp(player.x - canvas.width / 2, 0, MAP_W * TILE - canvas.width);
-    let camY = clamp(player.y - canvas.height / 2, 0, MAP_H * TILE - canvas.height);
+    const camBase = getCameraBase();
+    let camX = camBase.x;
+    let camY = camBase.y;
     if (shake.time > 0) {
       camX += rand(-1, 1) * shake.magnitude;
       camY += rand(-1, 1) * shake.magnitude;
