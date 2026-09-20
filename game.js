@@ -253,10 +253,10 @@
     const chests = [];
     const enemies = [];
     const enemyTypes = [
-      { name: "Rat", hp: 12, atk: 2, color: "#8a7358", speed: 60 },
-      { name: "Skeleton", hp: 20, atk: 4, color: "#d8d3c4", speed: 50 },
-      { name: "Goblin", hp: 16, atk: 3, color: "#5fa864", speed: 70 },
-      { name: "Ogre", hp: 40, atk: 7, color: "#7a4a4a", speed: 40 },
+      { key: "rat", name: "Rat", hp: 12, atk: 2, color: "#8a7358", speed: 60, radius: 9 },
+      { key: "skeleton", name: "Skeleton", hp: 20, atk: 4, color: "#d8d3c4", speed: 50, radius: 11 },
+      { key: "goblin", name: "Goblin", hp: 16, atk: 3, color: "#5fa864", speed: 70, radius: 11 },
+      { key: "ogre", name: "Ogre", hp: 40, atk: 7, color: "#7a4a4a", speed: 40, radius: 14 },
     ];
 
     rooms.forEach((room, idx) => {
@@ -276,6 +276,7 @@
         const scale = 1 + (depth - 1) * 0.25;
         enemies.push({
           uid: "enemy_" + idx + "_" + i,
+          type: t.key,
           name: t.name,
           color: t.color,
           colorRgb: hexToRgb(t.color),
@@ -285,10 +286,13 @@
           maxHp: Math.round(t.hp * scale),
           atk: Math.round(t.atk * scale),
           speed: t.speed,
-          radius: 12,
+          radius: t.radius,
           attackCooldown: 0,
           alive: true,
           hitFlash: 0,
+          facing: { x: 0, y: 1 },
+          animTime: 0,
+          isMoving: false,
         });
       }
     });
@@ -490,9 +494,12 @@
       if (enemy.attackCooldown > 0) enemy.attackCooldown -= dt;
 
       const d = dist(enemy.x, enemy.y, player.x, player.y);
-      if (d < 220 && d > 30) {
+      enemy.isMoving = d < 220 && d > 30;
+      if (enemy.isMoving) {
         const dx = (player.x - enemy.x) / d;
         const dy = (player.y - enemy.y) / d;
+        enemy.facing = { x: dx, y: dy };
+        enemy.animTime += dt;
         const moveX = dx * enemy.speed * dt;
         const moveY = dy * enemy.speed * dt;
         if (!collides(enemy.x + moveX, enemy.y, enemy.radius)) enemy.x += moveX;
@@ -628,6 +635,244 @@
     ctx.fill();
   }
 
+  function drawRat(cx, cy, facing, moving, animTime, bodyColor, eyeColor) {
+    const perp = { x: -facing.y, y: facing.x };
+    const wag = moving ? Math.sin(animTime * 14) * 0.6 : Math.sin(animTime * 2) * 0.15;
+
+    // tail, trailing behind the facing direction
+    ctx.strokeStyle = bodyColor;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx - facing.x * 8, cy - facing.y * 8);
+    ctx.quadraticCurveTo(
+      cx - facing.x * 14 + perp.x * 5 * wag,
+      cy - facing.y * 14 + perp.y * 5 * wag,
+      cx - facing.x * 18 + perp.x * 8 * wag,
+      cy - facing.y * 18 + perp.y * 8 * wag
+    );
+    ctx.stroke();
+
+    // low, wide body
+    ctx.fillStyle = bodyColor;
+    ctx.strokeStyle = "#332a1e";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, 10, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // head, pushed toward facing direction
+    const headX = cx + facing.x * 8;
+    const headY = cy + facing.y * 8;
+    ctx.beginPath();
+    ctx.ellipse(headX, headY, 5.5, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // ears
+    ctx.fillStyle = "#c9a98a";
+    ctx.beginPath();
+    ctx.arc(headX + perp.x * 4 - facing.x * 2, headY + perp.y * 4 - facing.y * 2, 2.5, 0, Math.PI * 2);
+    ctx.arc(headX - perp.x * 4 - facing.x * 2, headY - perp.y * 4 - facing.y * 2, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // eyes
+    ctx.fillStyle = eyeColor;
+    ctx.beginPath();
+    ctx.arc(headX + facing.x * 3 + perp.x * 2, headY + facing.y * 3 + perp.y * 2, 1.1, 0, Math.PI * 2);
+    ctx.arc(headX + facing.x * 3 - perp.x * 2, headY + facing.y * 3 - perp.y * 2, 1.1, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawSkeleton(cx, cy, facing, moving, animTime, bodyColor, eyeColor) {
+    const perp = { x: -facing.y, y: facing.x };
+    const swing = moving ? Math.sin(animTime * 10) * 4 : 0;
+
+    // legs
+    ctx.strokeStyle = bodyColor;
+    ctx.lineWidth = 2.5;
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(cx + perp.x * 3 * side, cy + 4);
+      ctx.lineTo(cx + perp.x * 3 * side + perp.x * side * swing * 0.3, cy + 12);
+      ctx.stroke();
+    }
+
+    // arms
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(cx + perp.x * 7 * side, cy - 4);
+      ctx.lineTo(cx + perp.x * 9 * side, cy + 4);
+      ctx.stroke();
+    }
+
+    // ribcage torso
+    ctx.fillStyle = bodyColor;
+    ctx.strokeStyle = "#8a8375";
+    ctx.lineWidth = 1;
+    roundRect(ctx, cx - 6, cy - 8, 12, 14, 3);
+    ctx.fill();
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath();
+      ctx.moveTo(cx - 5, cy - 4 + i * 3.5);
+      ctx.lineTo(cx + 5, cy - 4 + i * 3.5);
+      ctx.stroke();
+    }
+
+    // skull
+    ctx.fillStyle = bodyColor;
+    ctx.beginPath();
+    ctx.arc(cx, cy - 12, 6, 0, Math.PI * 2);
+    ctx.fill();
+
+    // hollow eye sockets, dark toward facing side
+    ctx.fillStyle = "#1a1410";
+    const eyeOffsetX = facing.x * 1.5;
+    const eyeOffsetY = facing.y * 1.5;
+    ctx.beginPath();
+    ctx.arc(cx - 2.2 + eyeOffsetX, cy - 12 + eyeOffsetY, 1.4, 0, Math.PI * 2);
+    ctx.arc(cx + 2.2 + eyeOffsetX, cy - 12 + eyeOffsetY, 1.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawGoblin(cx, cy, facing, moving, animTime, bodyColor, eyeColor) {
+    const perp = { x: -facing.y, y: facing.x };
+    const bob = moving ? Math.abs(Math.sin(animTime * 13)) * 1.5 : 0;
+    const by = cy - bob;
+
+    // hunched body
+    ctx.fillStyle = bodyColor;
+    ctx.strokeStyle = "#2f4a30";
+    ctx.lineWidth = 1.5;
+    roundRect(ctx, cx - 8, by - 6, 16, 15, 5);
+    ctx.fill();
+    ctx.stroke();
+
+    // head
+    const headY = by - 10;
+    ctx.beginPath();
+    ctx.arc(cx, headY, 6.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // big pointy ears
+    ctx.fillStyle = bodyColor;
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(cx + perp.x * 5 * side, headY - 1);
+      ctx.lineTo(cx + perp.x * 11 * side, headY - 4);
+      ctx.lineTo(cx + perp.x * 5 * side, headY + 2);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // eyes
+    ctx.fillStyle = eyeColor;
+    const eyeOffsetX = facing.x * 2.5;
+    const eyeOffsetY = facing.y * 2.5;
+    ctx.beginPath();
+    ctx.arc(cx - 2.3 + eyeOffsetX, headY + eyeOffsetY, 1.2, 0, Math.PI * 2);
+    ctx.arc(cx + 2.3 + eyeOffsetX, headY + eyeOffsetY, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // fang
+    ctx.fillStyle = "#eee";
+    ctx.beginPath();
+    ctx.moveTo(cx + facing.x * 5, headY + 3 + facing.y * 5);
+    ctx.lineTo(cx + facing.x * 5 - 1.5, headY + 6 + facing.y * 5);
+    ctx.lineTo(cx + facing.x * 5 + 1.5, headY + 6 + facing.y * 5);
+    ctx.fill();
+  }
+
+  function drawOgre(cx, cy, facing, moving, animTime, bodyColor, eyeColor) {
+    const perp = { x: -facing.y, y: facing.x };
+    const bob = moving ? Math.abs(Math.sin(animTime * 8)) * 2 : 0;
+    const by = cy - bob;
+
+    // club, dragging on the non-facing side
+    ctx.strokeStyle = "#5c4326";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(cx - perp.x * 10, by + 4);
+    ctx.lineTo(cx - perp.x * 16, by - 6);
+    ctx.stroke();
+    ctx.fillStyle = "#5c4326";
+    ctx.beginPath();
+    ctx.arc(cx - perp.x * 16, by - 6, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // bulky body
+    ctx.fillStyle = bodyColor;
+    ctx.strokeStyle = "#3d2626";
+    ctx.lineWidth = 2;
+    roundRect(ctx, cx - 12, by - 8, 24, 20, 7);
+    ctx.fill();
+    ctx.stroke();
+
+    // head
+    const headY = by - 13;
+    ctx.beginPath();
+    ctx.arc(cx, headY, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // tusks
+    ctx.fillStyle = "#f0ead6";
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(cx + perp.x * 3 * side + facing.x * 4, headY + 2 + facing.y * 4);
+      ctx.lineTo(cx + perp.x * 5 * side + facing.x * 4, headY + 6 + facing.y * 4);
+      ctx.lineTo(cx + perp.x * 1 * side + facing.x * 4, headY + 5 + facing.y * 4);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // small eyes, set deep in a big head
+    ctx.fillStyle = eyeColor;
+    const eyeOffsetX = facing.x * 2;
+    const eyeOffsetY = facing.y * 2;
+    ctx.beginPath();
+    ctx.arc(cx - 2.5 + eyeOffsetX, headY - 1 + eyeOffsetY, 1.3, 0, Math.PI * 2);
+    ctx.arc(cx + 2.5 + eyeOffsetX, headY - 1 + eyeOffsetY, 1.3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const ENEMY_SPRITES = {
+    rat: drawRat,
+    skeleton: drawSkeleton,
+    goblin: drawGoblin,
+    ogre: drawOgre,
+  };
+
+  function drawEnemySprite(enemy, cx, cy) {
+    // shadow
+    ctx.fillStyle = "rgba(0,0,0,0.3)";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + enemy.radius * 0.8, enemy.radius * 0.9, enemy.radius * 0.35, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    const flash = enemy.hitFlash > 0 && Math.floor(enemy.hitFlash * 40) % 2 === 0;
+    const bodyColor = flash ? "#ffffff" : enemy.color;
+    const eyeColor = enemy.type === "goblin" ? "#f0d94a" : "#1a1410";
+
+    const squash = enemy.hitFlash > 0 ? 1 + (enemy.hitFlash / 0.15) * 0.15 : 1;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(1 / squash, squash);
+    ctx.translate(-cx, -cy);
+
+    const draw = ENEMY_SPRITES[enemy.type];
+    if (draw) {
+      draw(cx, cy, enemy.facing, enemy.isMoving, enemy.animTime, bodyColor, eyeColor);
+    } else {
+      ctx.fillStyle = bodyColor;
+      ctx.beginPath();
+      ctx.arc(cx, cy, enemy.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   function render() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -677,21 +922,13 @@
       if (!enemy.alive) continue;
       const sx = enemy.x - camX;
       const sy = enemy.y - camY;
-      ctx.fillStyle = "rgba(0,0,0,0.3)";
-      ctx.beginPath();
-      ctx.ellipse(sx, sy + enemy.radius * 0.8, enemy.radius * 0.9, enemy.radius * 0.4, 0, 0, Math.PI * 2);
-      ctx.fill();
-      const squash = enemy.hitFlash > 0 ? 1 + (enemy.hitFlash / 0.15) * 0.3 : 1;
-      ctx.fillStyle = enemy.hitFlash > 0 ? "#ffffff" : enemy.color;
-      ctx.beginPath();
-      ctx.ellipse(sx, sy, enemy.radius / squash, enemy.radius * squash, 0, 0, Math.PI * 2);
-      ctx.fill();
+      drawEnemySprite(enemy, sx, sy);
       // hp bar
-      const w = 24;
+      const w = enemy.radius * 2 + 8;
       ctx.fillStyle = "#000";
-      ctx.fillRect(sx - w / 2, sy - enemy.radius - 10, w, 4);
+      ctx.fillRect(sx - w / 2, sy - enemy.radius - 12, w, 4);
       ctx.fillStyle = "#d63b3b";
-      ctx.fillRect(sx - w / 2, sy - enemy.radius - 10, w * clamp(enemy.hp / enemy.maxHp, 0, 1), 4);
+      ctx.fillRect(sx - w / 2, sy - enemy.radius - 12, w * clamp(enemy.hp / enemy.maxHp, 0, 1), 4);
     }
 
     // player
